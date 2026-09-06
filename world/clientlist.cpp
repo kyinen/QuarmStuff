@@ -299,8 +299,10 @@ void ClientList::ClearGroup(uint32 group_id) {
 }
 
 void ClientList::SendCLEList(const int16& admin, const char* to, WorldTCPConnection* connection, const char* iName) {
+	constexpr int kMaxIPLookupResults = 1200;
 	LinkedListIterator<ClientListEntry*> iterator(clientlist);
 	int x = 0, y = 0;
+	bool result_limit_reached = false;
 	int namestrlen = iName == 0 ? 0 : strlen(iName);
 	bool addnewline = false;
 	char newline[3];
@@ -313,12 +315,18 @@ void ClientList::SendCLEList(const int16& admin, const char* to, WorldTCPConnect
 	iterator.Reset();
 	while(iterator.MoreElements()) {
 		ClientListEntry* cle = iterator.GetData();
-                if (cle->Online() == CLE_Status::OfflineBazaar && namestrlen == 0) {
-                        iterator.Advance();
-                        x++;
-                        continue;
-                }
+		if (cle->Online() < CLE_Status::Zoning || cle->Online() == CLE_Status::OfflineBazaar) {
+			iterator.Advance();
+			x++;
+			continue;
+		}
 		if (admin >= cle->Admin() && (iName == 0 || namestrlen == 0 || strncasecmp(cle->name(), iName, namestrlen) == 0 || strncasecmp(cle->AccountName(), iName, namestrlen) == 0 || strncasecmp(cle->LSName(), iName, namestrlen) == 0)) {
+			if (y >= kMaxIPLookupResults) {
+				result_limit_reached = true;
+				iterator.Advance();
+				x++;
+				continue;
+			}
 			struct in_addr in;
 			in.s_addr = cle->GetIP();
 			if (addnewline) {
@@ -348,7 +356,12 @@ void ClientList::SendCLEList(const int16& admin, const char* to, WorldTCPConnect
 		iterator.Advance();
 		x++;
 	}
-	fmt::format_to(std::back_inserter(out), "{} {} CLEs in memory. {} CLEs listed. numplayers = {}.", newline, x, y, GetClientCount());
+	fmt::format_to(std::back_inserter(out), "{} {} CLEs in memory. {} online CLEs listed. numplayers = {}.", newline, x, y, GetClientCount());
+	if (result_limit_reached) {
+		fmt::format_to(
+			std::back_inserter(out), "{} Result limit of {} reached; additional online matches were omitted.",
+			newline, kMaxIPLookupResults);
+	}
 	out.push_back(0);
 	connection->SendEmoteMessageRaw(to, 0, AccountStatus::Player, Chat::NPCQuestSay, out.data());
 }
